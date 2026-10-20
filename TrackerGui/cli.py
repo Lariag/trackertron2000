@@ -5,7 +5,7 @@ import os
 import subprocess
 import sys
 
-# Tools/TrackerGui/cli.py -> Tools/Tracker/track.py
+# TrackerGui/cli.py -> Tracker/track.py, in the tracker repository
 TRACK = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "Tracker", "track.py")
 
 TYPES = ("spec", "feature", "bug", "debt", "problem")
@@ -20,14 +20,15 @@ class CliError(Exception):
 class Tracker:
     """Runs the CLI; each method is one command."""
 
-    def __init__(self, db=None):
-        self.db = db
+    # `folder` is the project's tracker folder; None leaves it to the CLI (the TRACKER_DIR variable).
+    def __init__(self, folder=None):
+        self.folder = folder
 
     # Run one command and return its stdout; a non-zero exit becomes a CliError with the stderr.
     def run(self, *args, as_json=False):
         command = [sys.executable, TRACK]
-        if self.db:
-            command += ["--db", self.db]
+        if self.folder:
+            command += ["--dir", self.folder]
         if as_json:
             command.append("--json")
         command += [str(arg) for arg in args]

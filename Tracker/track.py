@@ -41,7 +41,7 @@ TEMPLATES = os.path.join(TOOL_ROOT, "Templates")
 LANGUAGES = ("en", "es")
 # The files `init` copies into a tracker folder as they are: the launchers, the .gitignore and the
 # project's log of the tracker's problems.
-TEMPLATE_FILES = (".gitignore", "find-tracker.bat", "track.bat", "track.init.bat", "known-issues.md")
+TEMPLATE_FILES = (".gitignore", "find-tracker.bat", "track.bat", "track.init.bat", "tracker_gui.bat", "known-issues.md")
 # The project's configuration (its language), and the local file that says where the tracker
 # repository is on this machine (read by find-tracker.bat).
 CONFIG_NAME = "tracker.json"

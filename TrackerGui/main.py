@@ -1,6 +1,7 @@
-"""The tracker GUI: a window over Tools/Tracker/track.py for the user. Left, the items with instant
-filters; right, the selected item. Everything goes through the CLI (cli.py). Launch with
-tracker_gui.bat; `--db PATH` points it at another database."""
+"""The tracker GUI: a window over Tracker/track.py for the user. Left, the items with instant
+filters; right, the selected item. Everything goes through the CLI (cli.py). A project launches it
+with its tracker folder's tracker_gui.bat, which passes `--dir` (the folder; without it, the
+TRACKER_DIR variable)."""
 import argparse
 import os
 import sys
@@ -127,12 +128,12 @@ class MainWindow(QMainWindow):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--db", help="database path (default Spec/tracker.db)")
+    parser.add_argument("--dir", help="the project's tracker folder (default: the TRACKER_DIR variable)")
     args = parser.parse_args()
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
     app.setStyleSheet(STYLESHEET)
-    window = MainWindow(Tracker(args.db))
+    window = MainWindow(Tracker(args.dir))
     window.show()
     return app.exec()
 

@@ -973,12 +973,12 @@ class TrackTest(unittest.TestCase):
         self.assertEqual((code, lines), (0, [f"created {target}"]), err)
         self.assertEqual(sorted(os.listdir(target)), [
             ".gitignore", "find-tracker.bat", "known-issues.md", "tool-path.txt", "track.bat", "track.init.bat",
-            "tracker.db", "tracker.dump.sql", "tracker.json", "tracker.sections.json"])
+            "tracker.db", "tracker.dump.sql", "tracker.json", "tracker.sections.json", "tracker_gui.bat"])
         with open(os.path.join(target, "tool-path.txt"), encoding="utf-8") as f:
             self.assertEqual(os.path.normcase(f.read().strip()), os.path.normcase(tool))
         with open(os.path.join(target, "tracker.json"), encoding="utf-8") as f:
             self.assertEqual(json.load(f), {"language": "es"})
-        for name in (".gitignore", "track.bat", "track.init.bat", "find-tracker.bat", "known-issues.md"):
+        for name in (".gitignore", "track.bat", "track.init.bat", "tracker_gui.bat", "find-tracker.bat", "known-issues.md"):
             with open(os.path.join(tool, "Templates", name), "rb") as template, open(os.path.join(target, name), "rb") as copy:
                 self.assertEqual(copy.read(), template.read(), name)  # copied as it is
         # The folder works at once, with the starting sections of its language.
