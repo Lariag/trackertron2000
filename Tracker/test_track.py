@@ -1,4 +1,4 @@
-"""Tests for the tracker CLI (Tools/Tracker/track.py), run through Tools/Tracker/test.bat.
+"""Tests for the tracker CLI (Tracker/track.py), run through Tracker/test.bat.
 Every test runs the real CLI as a subprocess against a temporary tracker folder; no project's folder is
 never touched.
 

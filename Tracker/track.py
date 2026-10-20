@@ -29,7 +29,6 @@ VERSIONED = ("type", "status", "subject", "title", "body", "closed", "deleted")
 # What a version row says of its item, every column but the row's own id (which names no item).
 VERSION_COLUMNS = ("item_id", "version", "changed") + VERSIONED
 
-# Tools/Tracker/track.py: the project root is three levels up.
 # The environment variable that names the tracker folder when --dir is not given.
 DIR_VARIABLE = "TRACKER_DIR"
 # The database's file inside the tracker folder; the dump and the sections file are named after it.
@@ -570,7 +569,7 @@ def sections_path(db_path):
 @functools.lru_cache(maxsize=None)
 def project_sections(path):
     if not os.path.exists(path):
-        raise TrackError(f"no sections file {path}: it lists each type's sections (see Tracker.md)")
+        raise TrackError(f"no sections file {path}: it lists each type's sections (see 'Fixed sections' in tracker.md)")
     try:
         with open(path, encoding="utf-8") as f:
             config = json.load(f)

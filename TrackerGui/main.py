@@ -28,7 +28,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.tracker = tracker
         self.setWindowTitle("Tracker")
-        self.settings = QSettings("Sembrados", "TrackerGui")
+        self.settings = QSettings("trackertron2000", "TrackerGui")
 
         self.items = ItemList(tracker)
         self.view = ItemView(tracker)
