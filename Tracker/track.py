@@ -46,6 +46,8 @@ TEMPLATE_FILES = (".gitignore", "find-tracker.bat", "track.bat", "track.init.bat
 # repository is on this machine (read by find-tracker.bat).
 CONFIG_NAME = "tracker.json"
 TOOL_PATH_NAME = "tool-path.txt"
+# The reference: how the tracker works and how to use it, printed by `guide`.
+GUIDE = os.path.join(TOOL_ROOT, "tracker.md")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS items (
@@ -1187,6 +1189,9 @@ def build_parser():
     parser.add_argument("--json", action="store_true", help="machine-readable output for the reading commands")
     sub = parser.add_subparsers(dest="command", required=True)
 
+    p = sub.add_parser("guide", help="print the reference: how the tracker works and how to use it")
+    p.set_defaults(func=cmd_guide)
+
     p = sub.add_parser("init", help="make a project's tracker folder (--dir), with the starting sections of its language")
     p.add_argument("--language", required=True, choices=LANGUAGES, help="the language of the project's content")
     p.set_defaults(func=cmd_init)
@@ -1383,12 +1388,22 @@ def cmd_init(folder, args):
     print(f"created {folder}")
 
 
+# Print the reference as it is, so an agent reads it through its project's launcher without
+# knowing where the tracker repository is.
+def cmd_guide():
+    with open(GUIDE, encoding="utf-8") as f:
+        print(f.read(), end="")
+
+
 def main(argv=None):
     # Bodies and notes are markdown with any character; never let the console code page choke.
     sys.stdout.reconfigure(encoding="utf-8")
     sys.stderr.reconfigure(encoding="utf-8")
     sys.stdin.reconfigure(encoding="utf-8")
     args = build_parser().parse_args(argv)
+    if args.func is cmd_guide:
+        cmd_guide()
+        return 0
     try:
         folder = tracker_folder(args, must_exist=args.func is not cmd_init)
         if args.func is cmd_init:

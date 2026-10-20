@@ -40,6 +40,7 @@ Index:
 - show --expand: each reference followed by its title in «» (or deleted/missing), in body and notes; JSON keeps the raw texts
 - tracker folder: --dir or TRACKER_DIR, --dir first; none, or not a folder, refused
 - init: a project's tracker folder with its files, in its language; never over an existing one
+- guide: prints the reference, with or without a tracker folder
 - columns: the subject column widens so a long subject keeps two spaces before the title
 """
 import json
@@ -1000,6 +1001,19 @@ class TrackTest(unittest.TestCase):
             self.assertEqual(json.load(f), {"language": "es"})
         self.assertNotEqual(self.run_track("init", "--language", "fr", folder=os.path.join(self.dir.name, "x"))[0], 0)
         self.assertIn("no tracker folder", self.run_track("init", "--language", "en", folder=None)[2])
+
+    # --- guide ---
+    # `guide` prints the reference (tracker.md, at the root of the tracker repository) as it is, so
+    # an agent reads it through its project's launcher without knowing where the tracker is. It
+    # needs no tracker folder.
+    def test_guide(self):
+        with open(os.path.join(os.path.dirname(os.path.dirname(TRACK)), "tracker.md"), encoding="utf-8") as f:
+            reference = f.read()
+        code, lines, err = self.run_track("guide")
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual("\n".join(lines), reference.rstrip("\n"))
+        self.assertTrue(lines[0].startswith("# "))
+        self.assertEqual(self.run_track("guide", folder=None)[1], lines)
 
     # --- columns ---
     def test_columns(self):
