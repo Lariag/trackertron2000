@@ -63,6 +63,13 @@ Never change this repository while setting up or using the tracker. A problem fo
 goes into the project's `<tracker folder>/known-issues.md`; the user carries what matters over to
 this repository's `KNOWN_ISSUES.md`.
 
+### A project that already has a tracker
+
+Follow the steps above, then, before writing anything:
+- **Swap in the existing data.** Replace the new folder's empty `tracker.db`, `tracker.dump.sql` and `tracker.sections.json` with the project's existing ones, moved with git to keep their history. A log of the tracker's problems kept by the project can replace `known-issues.md` the same way.
+- **Check it.** `track.bat sections --check` and `track.bat refs --check` should print nothing. A database made by an older version is brought up to date the first time a command opens it.
+- **Remove the old copy.** Delete the old copy of the tracker's code, and update the instructions and ignore patterns that pointed to it.
+
 ### On another machine, or a fresh clone
 
 The tracker folder is in the project's git, but `tool-path.txt` is not. Clone this repository
