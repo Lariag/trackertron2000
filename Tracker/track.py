@@ -12,6 +12,7 @@ import functools
 import json
 import os
 import re
+import shutil
 import sqlite3
 import sys
 import tempfile
@@ -33,6 +34,18 @@ VERSION_COLUMNS = ("item_id", "version", "changed") + VERSIONED
 DIR_VARIABLE = "TRACKER_DIR"
 # The database's file inside the tracker folder; the dump and the sections file are named after it.
 DB_NAME = "tracker.db"
+# The tracker repository (Tracker/track.py: two levels up) and the templates `init` copies from it.
+TOOL_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+TEMPLATES = os.path.join(TOOL_ROOT, "Templates")
+# The languages a tracker folder can be made in: its starting sections are Templates/sections.<language>.json.
+LANGUAGES = ("en", "es")
+# The files `init` copies into a tracker folder as they are: the launchers, the .gitignore and the
+# project's log of the tracker's problems.
+TEMPLATE_FILES = (".gitignore", "find-tracker.bat", "track.bat", "track.init.bat", "known-issues.md")
+# The project's configuration (its language), and the local file that says where the tracker
+# repository is on this machine (read by find-tracker.bat).
+CONFIG_NAME = "tracker.json"
+TOOL_PATH_NAME = "tool-path.txt"
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS items (
@@ -1174,6 +1187,10 @@ def build_parser():
     parser.add_argument("--json", action="store_true", help="machine-readable output for the reading commands")
     sub = parser.add_subparsers(dest="command", required=True)
 
+    p = sub.add_parser("init", help="make a project's tracker folder (--dir), with the starting sections of its language")
+    p.add_argument("--language", required=True, choices=LANGUAGES, help="the language of the project's content")
+    p.set_defaults(func=cmd_init)
+
     p = sub.add_parser("next", help="the ranked list: doing first, then open by rank")
     p.add_argument("-n", type=int, default=10)
     p.add_argument("--section", metavar="TITLE", help="each item followed by that section's content")
@@ -1327,15 +1344,43 @@ def save_dump(conn, args):
              f"run `track dump`")
 
 
-# The tracker folder: --dir, else the TRACKER_DIR variable. It must exist: the tracker never
-# guesses where a project keeps its files, and never creates the folder by accident.
-def tracker_folder(args):
+# The tracker folder: --dir, else the TRACKER_DIR variable. It must exist (only `init` makes
+# one): the tracker never guesses where a project keeps its files, and never creates the folder by
+# accident.
+def tracker_folder(args, must_exist=True):
     folder = args.tracker_dir or os.environ.get(DIR_VARIABLE)
     if not folder:
         raise TrackError(f"no tracker folder: pass --dir PATH or set {DIR_VARIABLE}")
-    if not os.path.isdir(folder):
+    if must_exist and not os.path.isdir(folder):
         raise TrackError(f"not a folder: {folder}")
     return folder
+
+
+# Make a project's tracker folder (created when missing): the template files, the starting
+# sections of its language, its configuration, where the tracker is, and an empty database with its
+# dump. Refused, with nothing written, when any of those files is already there.
+def cmd_init(folder, args):
+    db = os.path.join(folder, DB_NAME)
+    made = [os.path.join(folder, name) for name in TEMPLATE_FILES + (CONFIG_NAME, TOOL_PATH_NAME)]
+    made += [db, dump_path(db), sections_path(db)]
+    existing = [os.path.basename(path) for path in made if os.path.exists(path)]
+    if existing:
+        raise TrackError(f"already a tracker folder: {folder} has {', '.join(existing)}")
+    os.makedirs(folder, exist_ok=True)
+    for name in TEMPLATE_FILES:
+        shutil.copyfile(os.path.join(TEMPLATES, name), os.path.join(folder, name))
+    shutil.copyfile(os.path.join(TEMPLATES, f"sections.{args.language}.json"), sections_path(db))
+    with open(os.path.join(folder, CONFIG_NAME), "w", encoding="utf-8", newline="\n") as f:
+        json.dump({"language": args.language}, f, ensure_ascii=False)
+        f.write("\n")
+    with open(os.path.join(folder, TOOL_PATH_NAME), "w", encoding="utf-8") as f:
+        f.write(TOOL_ROOT + "\n")
+    conn = connect(db)
+    try:
+        write_dump(conn, db)
+    finally:
+        conn.close()
+    print(f"created {folder}")
 
 
 def main(argv=None):
@@ -1345,7 +1390,11 @@ def main(argv=None):
     sys.stdin.reconfigure(encoding="utf-8")
     args = build_parser().parse_args(argv)
     try:
-        args.db = os.path.join(tracker_folder(args), DB_NAME)
+        folder = tracker_folder(args, must_exist=args.func is not cmd_init)
+        if args.func is cmd_init:
+            cmd_init(folder, args)
+            return 0
+        args.db = os.path.join(folder, DB_NAME)
     except TrackError as error:
         print(f"track: {error}", file=sys.stderr)
         return 1

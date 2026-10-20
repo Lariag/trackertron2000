@@ -1,0 +1,10 @@
+{
+  "specs_section": "Specs",
+  "sections": {
+    "spec": ["What it is", "Rules", "Later"],
+    "feature": ["What to do", "Specs", "Out of scope"],
+    "bug": ["What is seen", "Cause", "What to do", "Specs"],
+    "debt": ["What to do", "Specs"],
+    "problem": ["What it is", "Possible solution", "Specs"]
+  }
+}

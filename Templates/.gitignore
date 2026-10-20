@@ -1,0 +1,6 @@
+# Where the tracker repository is on this machine (written by track.init.bat)
+tool-path.txt
+# A dump being written by the CLI (only left behind if the process is killed)
+*.dump.sql.*.tmp
+# Markdown exports (track export)
+tracker_export_*/

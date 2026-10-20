@@ -1,0 +1,10 @@
+{
+  "specs_section": "Specs",
+  "sections": {
+    "spec": ["Qué es", "Reglas", "Más adelante"],
+    "feature": ["Qué hay que hacer", "Specs", "Fuera de alcance"],
+    "bug": ["Qué se ve", "Causa", "Qué hay que hacer", "Specs"],
+    "debt": ["Qué hay que hacer", "Specs"],
+    "problem": ["Qué es", "Posible solución", "Specs"]
+  }
+}

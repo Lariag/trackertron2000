@@ -39,6 +39,7 @@ Index:
 - sections file: the sections come from the file next to the database; read only when needed; missing or broken file refused
 - show --expand: each reference followed by its title in «» (or deleted/missing), in body and notes; JSON keeps the raw texts
 - tracker folder: --dir or TRACKER_DIR, --dir first; none, or not a folder, refused
+- init: a project's tracker folder with its files, in its language; never over an existing one
 - columns: the subject column widens so a long subject keeps two spaces before the title
 """
 import json
@@ -960,6 +961,45 @@ class TrackTest(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn(f"not a folder: {missing}", err)
         self.assertFalse(os.path.exists(missing))  # nothing created
+
+    # --- init ---
+    # `init` makes a project's tracker folder: the launchers, the configuration, the starting
+    # sections in the project's language, an empty database with its dump and where the tracker is.
+    # It creates the folder when missing and never overwrites anything.
+    def test_init(self):
+        tool = os.path.dirname(os.path.dirname(TRACK))
+        target = os.path.join(self.dir.name, "Project", "Tracker")  # not there yet
+        code, lines, err = self.run_track("init", "--language", "es", folder=target)
+        self.assertEqual((code, lines), (0, [f"created {target}"]), err)
+        self.assertEqual(sorted(os.listdir(target)), [
+            ".gitignore", "find-tracker.bat", "known-issues.md", "tool-path.txt", "track.bat", "track.init.bat",
+            "tracker.db", "tracker.dump.sql", "tracker.json", "tracker.sections.json"])
+        with open(os.path.join(target, "tool-path.txt"), encoding="utf-8") as f:
+            self.assertEqual(os.path.normcase(f.read().strip()), os.path.normcase(tool))
+        with open(os.path.join(target, "tracker.json"), encoding="utf-8") as f:
+            self.assertEqual(json.load(f), {"language": "es"})
+        for name in (".gitignore", "track.bat", "track.init.bat", "find-tracker.bat", "known-issues.md"):
+            with open(os.path.join(tool, "Templates", name), "rb") as template, open(os.path.join(target, name), "rb") as copy:
+                self.assertEqual(copy.read(), template.read(), name)  # copied as it is
+        # The folder works at once, with the starting sections of its language.
+        self.assertEqual(self.run_track("add", "spec", "Una", folder=target)[0], 0)
+        self.assertEqual(self.run_track("sections", "1", folder=target)[1], ["## Qué es", "## Reglas", "## Más adelante"])
+        english = os.path.join(self.dir.name, "Other")
+        self.assertEqual(self.run_track("init", "--language", "en", folder=english)[0], 0)
+        self.assertEqual(self.run_track("add", "feature", "One", folder=english)[0], 0)
+        self.assertEqual(self.run_track("sections", "1", folder=english)[1], ["## What to do", "## Specs", "## Out of scope"])
+        # Never over a tracker folder: refused, and nothing changed.
+        with open(os.path.join(target, "tracker.db"), "rb") as f:
+            before = f.read()
+        code, _, err = self.run_track("init", "--language", "en", folder=target)
+        self.assertEqual(code, 1)
+        self.assertIn(f"already a tracker folder: {target}", err)
+        with open(os.path.join(target, "tracker.db"), "rb") as f:
+            self.assertEqual(f.read(), before)
+        with open(os.path.join(target, "tracker.json"), encoding="utf-8") as f:
+            self.assertEqual(json.load(f), {"language": "es"})
+        self.assertNotEqual(self.run_track("init", "--language", "fr", folder=os.path.join(self.dir.name, "x"))[0], 0)
+        self.assertIn("no tracker folder", self.run_track("init", "--language", "en", folder=None)[2])
 
     # --- columns ---
     def test_columns(self):
