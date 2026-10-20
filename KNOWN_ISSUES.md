@@ -6,7 +6,8 @@ are appended, never rewritten. Projects log their findings in their tracker fold
 `known-issues.md`; what matters is carried over here.
 
 **Still open:** 6 (statuses and specs), 10 (no batch operations, an idea), 11 (no diff between
-versions), 13 (unclosed files in the tests), 17 (deleted items listed like live ones).
+versions), 13 (unclosed files in the tests), 17 (deleted items listed like live ones), 24 (output
+redirected to a file not UTF-8: not reproduced).
 
 ## From Sembrados (2026-10-16 to 2026-10-19)
 
@@ -234,3 +235,34 @@ exist (all refused with "no item", nothing changed).
   one is left untouched. `tracker.md` lists every JSON output's fields, a note's `id` (the note's
   own number) included. Tested by `test_json_ids` (red before the fix: item #1's row carried
   `"id": 4`).
+
+**23. A multi-line inline argument loses everything after its first line.** (2026-10-20)
+`track.bat replace 214 "#2" "#2<newline>#343" --section Specs` (from Git Bash) stored only `#2`, and
+reported a new version as if it had changed something; the same with a two-line `NEW` on #343.
+`cmd.exe`, which runs the `.bat` launcher, cuts an argument at its first line break.
+- **Impact:** a multi-line text given inline is silently truncated, and the write still succeeds
+  (an empty change gets a version of its own). Found by reading the items back; fixed through stdin.
+- **Possible solution:** the launcher cannot keep line breaks in `%*`, so refuse (or warn on) a write
+  whose result equals the item's current body, and say in the reference that multi-line texts must go
+  through stdin or a file, never inline.
+- *Fixed (2026-10-20):* reproduced through the launcher (`replace` with a two-line new text kept its
+  first line and made a version that changed nothing). The cut itself happens in cmd, before the CLI
+  gets anything, so it cannot be fixed there; what made it silent is. A write that changes nothing
+  makes no version: a text that would leave the body as it is (`replace`, `section --set`,
+  `set body=`) is refused, and when the text was given inline the error says cmd keeps only its first
+  line and to use stdin; a field given the value it already has (`set`, `close`, `drop`) writes
+  nothing, says so on stderr and exits 0. `tracker.md` says why multi-line texts never go inline.
+  Tested by `test_unchanged_writes` (red before the fix: the `replace` of a text by itself made v2).
+
+**24. Plain-text output redirected to a file is not UTF-8.** (2026-10-20)
+`track.bat section 214 "What to do" > file` wrote `×` as an invalid byte; the stored text was right
+(`--json` output, read as UTF-8, had it), only the plain-text output redirected seemed to be in the
+console's code page.
+- **Impact:** text taken from a redirected `show`/`section` and written back would corrupt every
+  non-ASCII character. Reading through `--json` is safe.
+- **Possible solution:** write stdout as UTF-8 whatever the console.
+- *Not reproduced (2026-10-20):* the CLI already switches stdout to UTF-8. `section` with `×` and `é`,
+  redirected to a file through the launcher, through Python directly and from `cmd`, wrote UTF-8 each
+  time (`c3 97`, `c3 a9`); every test reads the CLI's output as UTF-8 too. The only difference is the
+  line ending: redirected output ends its lines with `\r\n`, which the CLI normalizes when the text
+  comes back in. Left open in case it shows again: the file may have been read in another encoding.

@@ -21,7 +21,8 @@ project's root, as usual); `track.bat guide` prints this file.
   line.
 - **Pass the version you read** (`--if-version N`) on writes that rewrite a body, so an edit made
   meanwhile in the GUI is never overwritten unseen.
-- **Multi-line text goes through stdin** (`-`), not temporary files.
+- **Multi-line text goes through stdin** (`-`), not temporary files, and never inline: cmd, which runs
+  the launchers, keeps only the first line of an argument.
 - **Search and follow references with the CLI**: `track list --search "words"` finds items by
   text; `track refs ID` shows what an item mentions and what mentions it;
   `track list --type feature --mentions 7` is "which features implement spec #7".
@@ -221,7 +222,14 @@ the index files `Next steps.md`, `Drafts.md`, `Potential problems.md`, `Debt.md`
   `{"subject", "open_count", "total"}`; `sections` gives `{"level", "title"}`; `section` the text alone.
 
 Errors exit with code 1 and one line on stderr. Every write that changes an item appends exactly one
-version; `note` and `rank` append none.
+version; `note` and `rank` append none, and neither does a write that changes nothing:
+- **A text that would leave the body as it is** (`replace`, `section --set`, `set body=` with
+  nothing else changing) is refused with nothing written: writing a text means wanting a change.
+  When the text was given in the command, the error names the likeliest cause, cmd keeping only its
+  first line. `section --set` compares the content as `section` reads it, blank lines around it aside.
+- **A field given the value it already has** (`set status=open` on an open item, `close` on a done
+  one...) is no error: nothing is written, a `track: warning:` line says so, and the command exits 0.
+  A `close` or `drop` with a note on an item already so still adds the note.
 
 ## The tracker folder
 

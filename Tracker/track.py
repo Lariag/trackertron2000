@@ -184,9 +184,14 @@ def get_item(conn, item_id, include_deleted=False):
     return row
 
 
-# Append a new version of an item: the latest row with `changes` applied.
+# Append a new version of an item: the latest row with `changes` applied. A column given the value
+# it already has is no change, and with no change left nothing is written: no empty versions.
+# Returns whether a version was written.
 def new_version(conn, item_id, changes):
     row = get_item(conn, item_id, include_deleted=True)
+    changes = {column: value for column, value in changes.items() if row[column] != value}
+    if not changes:
+        return False
     values = {column: row[column] for column in VERSIONED}
     values.update(changes)
     if "body" in changes or "type" in changes:
@@ -198,6 +203,22 @@ def new_version(conn, item_id, changes):
         (item_id, row["version"] + 1, now(), *(values[column] for column in VERSIONED)))
     if "body" in changes:
         warn_references(conn, changes["body"], "body")
+    return True
+
+
+# Refuse a text write that leaves the body as it is: writing a text means wanting a change, so none
+# is nearly always a mistake. When the text was given in the command (`inline`), the likeliest one is
+# named: cmd, which runs the launchers, keeps only the first line of an argument.
+def check_body_changes(row, body, inline):
+    if body == row["body"]:
+        cause = ("; a text given in the command keeps only its first line (cmd cuts it there): pass a "
+                 "multi-line text through stdin" if inline else "")
+        raise TrackError(f"#{row['item_id']}'s body would not change{cause}")
+
+
+# Whether a text option's text was given in the command itself, not by a file or stdin.
+def given_inline(text, path):
+    return path is None and text is not None and text != STDIN
 
 
 # An item id as the CLI receives it: bare (`42`) or as `add` prints it and a reference writes it
@@ -375,9 +396,13 @@ def set_rank(conn, item_id, position):
 # Move an item to done/dropped: closed date set, rank cleared, optional final note; warns when
 # questions are left unanswered.
 def close_item(conn, item_id, status, final_note):
-    get_item(conn, item_id)
-    new_version(conn, item_id, {"status": status, "closed": today()})
-    renumber(conn)
+    row = get_item(conn, item_id)
+    if row["status"] == status:
+        # Already so: no version, and the closing date stays; a final note is still a change.
+        warn(f"#{item_id} is already {status}: " + ("only the note is written" if final_note else "nothing written"))
+    else:
+        new_version(conn, item_id, {"status": status, "closed": today()})
+        renumber(conn)
     if final_note:
         add_note(conn, item_id, final_note)
     still_open = [f"note {row['note_id']}" for row in open_questions(conn, item_id)]
@@ -880,7 +905,12 @@ def cmd_section(conn, args):
                 print(line)
         return False
     check_version(row, args.if_version)
-    new_version(conn, args.id, {"body": replace_section(lines, section, read_text(args.set, args.set_file))})
+    text = read_text(args.set, args.set_file)
+    # Compared as `section` reads it: the same content is no change, whatever blank lines around it.
+    same = text == "\n".join(section_content(lines, section))
+    body = row["body"] if same else replace_section(lines, section, text)
+    check_body_changes(row, body, given_inline(args.set, args.set_file))
+    new_version(conn, args.id, {"body": body})
     return True
 
 
@@ -932,7 +962,10 @@ def cmd_replace(conn, args):
         found = "not found" if count == 0 else f"found {count} times"
         raise TrackError(f"text {found}{where} in #{args.id}; it must appear exactly once (add context)")
     position = body.index(old, start, end)
-    new_version(conn, args.id, {"body": body[:position] + new + body[position + len(old):]})
+    new_body = body[:position] + new + body[position + len(old):]
+    # The new text is the one written: whether it came inline says whether cmd could have cut it.
+    check_body_changes(row, new_body, given_inline(args.new, args.new_file))
+    new_version(conn, args.id, {"body": new_body})
     print(f"#{args.id} v{row['version'] + 1}")
     return True
 
@@ -1024,9 +1057,13 @@ def cmd_questions(conn, args):
     return False
 
 
+# Change some fields of an item in one version. A field given the value it already has is no change:
+# with nothing else changing, nothing is written and a line says so; a body that would not change
+# with nothing else changing is refused, like any text write (see `check_body_changes`).
 def cmd_set(conn, args):
-    check_version(get_item(conn, args.id), args.if_version)
-    changes, rank = {}, None
+    row = get_item(conn, args.id)
+    check_version(row, args.if_version)
+    changes, rank, body_inline = {}, None, False
     for assignment in args.assignments:
         if "=" not in assignment:
             raise TrackError(f"expected field=value, got '{assignment}'")
@@ -1037,22 +1074,30 @@ def cmd_set(conn, args):
             check_type(value)
         elif field == "status":
             check_status(value)
-            # Closing sets the date, reopening clears it.
-            changes["closed"] = today() if value in CLOSED else None
+            # Closing sets the date, reopening clears it; the same status leaves it as it is.
+            if value != row["status"]:
+                changes["closed"] = today() if value in CLOSED else None
         elif field == "rank":
             rank = int(value)
             continue
         elif field == "body":
             # `body=@PATH` reads a file (`@-` stdin); `body=-` reads stdin as well.
+            body_inline = not value.startswith("@") and value != STDIN
             value = read_text(None, value[1:]) if value.startswith("@") else read_text(value, None)
         changes[field] = value
+    changed = {field: value for field, value in changes.items() if row[field] != value}
+    if changes and not changed:
+        if "body" in changes:
+            check_body_changes(row, changes["body"], body_inline)
+        already = [f"{field}={value}" for field, value in changes.items()]
+        warn(f"#{args.id} already has {', '.join(already)}: nothing written")
     # All the field changes make one version; the rank is a position, kept outside it.
-    if changes:
-        new_version(conn, args.id, changes)
+    if changed:
+        new_version(conn, args.id, changed)
     renumber(conn)
     if rank is not None:
         set_rank(conn, args.id, rank)
-    return True
+    return bool(changed) or rank is not None
 
 
 def cmd_close(conn, args):

@@ -41,6 +41,7 @@ Index:
 - tracker folder: --dir or TRACKER_DIR, --dir first; none, or not a folder, refused
 - init: a project's tracker folder with its files, in its language; never over an existing one
 - guide: prints the reference, with or without a tracker folder
+- writes that change nothing: an unchanged body refused (naming cmd for inline text), an unchanged field written as nothing
 - columns: the subject column widens so a long subject keeps two spaces before the title
 """
 import json
@@ -1014,6 +1015,53 @@ class TrackTest(unittest.TestCase):
         self.assertEqual("\n".join(lines), reference.rstrip("\n"))
         self.assertTrue(lines[0].startswith("# "))
         self.assertEqual(self.run_track("guide", folder=None)[1], lines)
+
+    # --- writes that change nothing ---
+    # A text that leaves the body as it is is refused: writing a text means wanting a change, and
+    # none is nearly always a mistake (an inline text cut at its first line by cmd, which runs the
+    # launchers, says so). A field set to the value it already has writes nothing and says so, but is
+    # no error. Neither makes an empty version (PruebaPhysicsworld1's known issues, 2026-10-20).
+    def test_unchanged_writes(self):
+        self.add("feature", "A", "--body", self.make_body("feature", {"Qué hay que hacer": "uno"}))
+        versions = lambda: len(self.ok("history", "1"))
+        err = self.fails("replace", "1", "uno", "uno")
+        self.assertIn("#1's body would not change", err)
+        self.assertIn("cmd", err)  # an inline text: the likeliest cause is named
+        err = self.fails("replace", "1", "uno", "--new-file", "-", stdin="uno")
+        self.assertIn("would not change", err)
+        self.assertNotIn("cmd", err)  # from stdin: no cut is possible
+        self.assertIn("cmd", self.fails("section", "1", "Qué hay que hacer", "--set", "uno"))
+        self.assertNotIn("cmd", self.fails("section", "1", "Qué hay que hacer", "--set-file", "-", stdin="uno\n"))
+        self.assertIn("would not change", self.fails("set", "1", "body=" + self.body(1)))
+        self.assertIn("would not change", self.fails("set", "1", "body=" + self.body(1), "status=open"))
+        self.assertEqual(versions(), 1)
+        # A field that already has the value: success, nothing written, a line on stderr.
+        code, _, err = self.run_track("set", "1", "status=open", "subject=")
+        self.assertEqual(code, 0)
+        self.assertIn("#1 already has status=open, subject=: nothing written", err)
+        self.assertEqual(versions(), 1)
+        # Only what changes is written, in one version, quietly.
+        code, _, err = self.run_track("set", "1", "status=doing", "subject=", "body=" + self.body(1))
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(versions(), 2)
+        self.assertEqual(self.ok("show", "1")[0], "#1 feature doing  []  A")
+        self.ok("close", "1")
+        closed = self.ok("show", "1")[1]
+        code, _, err = self.run_track("close", "1")
+        self.assertEqual(code, 0)
+        self.assertIn("#1 is already done: nothing written", err)
+        self.ok("set", "1", "status=done")  # already done: the closing date stays
+        self.assertEqual(self.ok("show", "1")[1], closed)
+        self.assertEqual(versions(), 3)
+        code, _, err = self.run_track("close", "1", "Una nota al final.")
+        self.assertEqual(code, 0)
+        self.assertIn("already done", err)
+        self.assertTrue(self.ok("show", "1")[-1].endswith(": Una nota al final."))  # the note is a change
+        self.assertEqual(versions(), 3)
+        code, _, err = self.run_track("drop", "1")
+        self.assertEqual(code, 0)
+        self.assertEqual(self.ok("show", "1")[0], "#1 feature dropped  []  A")  # done to dropped is a change
+        self.assertEqual(versions(), 4)
 
     # --- columns ---
     def test_columns(self):
