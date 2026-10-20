@@ -1,0 +1,1 @@
+# Standard library only today (sqlite3, argparse). The GUI will add its dependencies here.

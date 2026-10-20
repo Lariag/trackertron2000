@@ -1,0 +1,21 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# --- Tracker ---
+# Install stamps written by Tracker/env_install.bat (one per requirements file)
+*.installed
+# A dump being written by the CLI (only left behind if the process is killed)
+*.dump.sql.*.tmp
+# Markdown exports (track export)
+tracker_export_*/
+
+# --- Editors and OS ---
+.idea/
+.vscode/
+*.swp
+Thumbs.db
+Desktop.ini
