@@ -184,9 +184,10 @@ def get_item(conn, item_id, include_deleted=False):
     return row
 
 
-# Append a new version of an item: the latest row with `changes` applied. A column given the value
-# it already has is no change, and with no change left nothing is written: no empty versions.
-# Returns whether a version was written.
+# Append a new version of an item: the latest row with `changes` applied, and say so (`#ID vN`), so
+# every write that makes a version names what it wrote. A column given the value it already has is
+# no change, and with no change left nothing is written: no empty versions. Returns whether a
+# version was written.
 def new_version(conn, item_id, changes):
     row = get_item(conn, item_id, include_deleted=True)
     changes = {column: value for column, value in changes.items() if row[column] != value}
@@ -203,6 +204,7 @@ def new_version(conn, item_id, changes):
         (item_id, row["version"] + 1, now(), *(values[column] for column in VERSIONED)))
     if "body" in changes:
         warn_references(conn, changes["body"], "body")
+    print(f"#{item_id} v{row['version'] + 1}")
     return True
 
 
@@ -376,6 +378,11 @@ def renumber(conn):
         conn.execute("UPDATE ranks SET rank = ? WHERE item_id = ?", (position, row["item_id"]))
 
 
+# What a rank write says it wrote: the item's position, or the backlog for 0.
+def rank_line(item_id, position):
+    return f"#{item_id} rank {position}" if position else f"#{item_id} backlog"
+
+
 # Put the item at position `position` of the ranked list (0 = out of the list), shifting the rest.
 def set_rank(conn, item_id, position):
     row = get_item(conn, item_id)
@@ -404,7 +411,7 @@ def close_item(conn, item_id, status, final_note):
         new_version(conn, item_id, {"status": status, "closed": today()})
         renumber(conn)
     if final_note:
-        add_note(conn, item_id, final_note)
+        print(f"note {add_note(conn, item_id, final_note)} on #{item_id}")
     still_open = [f"note {row['note_id']}" for row in open_questions(conn, item_id)]
     if still_open:
         count = "an open question" if len(still_open) == 1 else f"{len(still_open)} open questions"
@@ -515,13 +522,36 @@ def normalize_title(title):
     return (heading[1] if heading else title.strip()).casefold()
 
 
+# The markers that open and close a fenced code block, and how far a marker may be indented.
+FENCES = ("```", "~~~")
+FENCE_MAX_INDENT = 3
+
+
+# The fence a line opens or closes (``` or ~~~), or None for any other line.
+def fence_marker(line):
+    stripped = line.lstrip(" ")
+    if len(line) - len(stripped) > FENCE_MAX_INDENT:
+        return None
+    return next((fence for fence in FENCES if stripped.startswith(fence)), None)
+
+
 # The sections of a body as dicts: level, title, heading line index, and the [start, end) line
 # range of the content, which runs to the next heading of the same or a higher level (so a
-# section's subsections are part of its content).
+# section's subsections are part of its content). A line inside a fenced code block is never a
+# heading, so a code example may have a `#` comment at column 0; a fence never closed runs to the end.
 def parse_sections(body):
     lines = body.split("\n") if body else []
     sections = []
+    fence = None
     for index, line in enumerate(lines):
+        marker = fence_marker(line)
+        if fence:
+            # Inside a block: only the same kind of fence closes it.
+            fence = None if marker == fence else fence
+            continue
+        if marker:
+            fence = marker
+            continue
         heading = parse_heading(line)
         if heading:
             sections.append({"level": heading[0], "title": heading[1], "heading": index,
@@ -966,13 +996,12 @@ def cmd_replace(conn, args):
     # The new text is the one written: whether it came inline says whether cmd could have cut it.
     check_body_changes(row, new_body, given_inline(args.new, args.new_file))
     new_version(conn, args.id, {"body": new_body})
-    print(f"#{args.id} v{row['version'] + 1}")
     return True
 
 
 def cmd_note(conn, args):
     get_item(conn, args.id)
-    add_note(conn, args.id, note_text(args))
+    print(f"note {add_note(conn, args.id, note_text(args))} on #{args.id}")
     return True
 
 
@@ -1097,6 +1126,7 @@ def cmd_set(conn, args):
     renumber(conn)
     if rank is not None:
         set_rank(conn, args.id, rank)
+        print(rank_line(args.id, rank))
     return bool(changed) or rank is not None
 
 
@@ -1133,6 +1163,7 @@ def cmd_restore(conn, args):
 
 def cmd_rank(conn, args):
     set_rank(conn, args.id, args.position)
+    print(rank_line(args.id, args.position))
     return True
 
 

@@ -266,3 +266,32 @@ console's code page.
   time (`c3 97`, `c3 a9`); every test reads the CLI's output as UTF-8 too. The only difference is the
   line ending: redirected output ends its lines with `\r\n`, which the CLI normalizes when the text
   comes back in. Left open in case it shows again: the file may have been read in another encoding.
+
+**25. `note` and `set` print nothing when they succeed.** (2026-10-21)
+During the building tool rework, `track set 348 status=doing` and `track note 347 "..."` returned with
+no output, while `replace` prints `#ID vN` and `add` prints the new id. Whether the write landed had to
+be checked with `history` or `show`. (The log said `add-section` and `section --set` printed `#ID vN`
+too; they did not: only `add`, `replace`, `ask` and `answer` printed anything.)
+- **Impact:** a write that silently went to the wrong place (a wrong id is an error, but a note sent to
+  the wrong item is not) looks the same as one that worked; scripted runs cannot log what they changed.
+- **Possible solution:** every write prints one line naming what it wrote: `#ID vN` for `set`,
+  `note N on #ID` for `note`, as `ask` already prints its note number.
+- *Fixed (2026-10-21), for every write, by the user's decision:* `#ID vN` for every new version
+  (printed in the one place versions are written, so no write can forget it), `note N on #ID` for a note
+  (`note`, and the final note of `close`/`drop`), `#ID rank N` or `#ID backlog` for a rank. `add`,
+  `ask` and `answer` keep their output. A write that writes nothing prints nothing on stdout. Tested by
+  `test_writes_say_what_they_wrote` (red before the fix: `set` printed nothing).
+
+**26. A `#` comment inside a fenced code block counts as a section heading.** (2026-10-21)
+Replacing a spec's YAML example with one holding the comment lines `# shapes.yaml` and
+`# materials.yaml` at the start of a line, inside a ```` ```yaml ```` block, was refused: "the body does
+not follow the spec sections ... found: ... # shapes.yaml, # materials.yaml ...". The section check read
+every line starting with `#` and a space as a heading, fenced code included.
+- **Impact:** code examples in a body (YAML, shell, GDScript comments) could not have a comment at
+  column 0; the text had to be reworded around it.
+- **Possible solution:** skip fenced code blocks when reading the body's headings, in the section
+  check, `sections`, `section` and `add-section`.
+- *Fixed (2026-10-21):* the one function that reads a body's sections skips fenced code blocks
+  (```` ``` ```` or `~~~`, indented up to 3 spaces; only the same kind of fence closes one, and a fence
+  never closed runs to the end), so the check and every section command see the same headings. Tested
+  by `test_fenced_code` (red before the fix: the body with the YAML comments was refused).

@@ -42,6 +42,8 @@ Index:
 - init: a project's tracker folder with its files, in its language; never over an existing one
 - guide: prints the reference, with or without a tracker folder
 - writes that change nothing: an unchanged body refused (naming cmd for inline text), an unchanged field written as nothing
+- every write says what it wrote: #ID vN, note N on #ID, #ID rank N; nothing when nothing is written
+- fenced code: no heading inside ``` or ~~~ blocks; an unclosed fence hides the rest
 - columns: the subject column widens so a long subject keeps two spaces before the title
 """
 import json
@@ -1062,6 +1064,46 @@ class TrackTest(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(self.ok("show", "1")[0], "#1 feature dropped  []  A")  # done to dropped is a change
         self.assertEqual(versions(), 4)
+
+    # --- every write says what it wrote ---
+    # Every write prints one line naming what it wrote, so a write that went to the wrong place is
+    # seen at once and a script can log what it changed (PruebaPhysicsworld1's known issues,
+    # 2026-10-21). A write that writes nothing prints nothing: its warning says so on stderr.
+    def test_writes_say_what_they_wrote(self):
+        self.add("feature", "A")
+        self.assertEqual(self.ok("set", "1", "subject=X"), ["#1 v2"])
+        self.assertEqual(self.ok("note", "1", "Una nota."), ["note 1 on #1"])
+        self.assertEqual(self.ok("section", "1", "Specs", "--set", "x"), ["#1 v3"])
+        self.assertEqual(self.ok("add-section", "1", "Detalle"), ["#1 v4"])
+        self.assertEqual(self.ok("replace", "1", "x", "y"), ["#1 v5"])
+        self.assertEqual(self.ok("rank", "1", "1"), ["#1 rank 1"])
+        self.assertEqual(self.ok("set", "1", "rank=0"), ["#1 backlog"])
+        self.assertEqual(self.ok("set", "1", "status=doing", "rank=1"), ["#1 v6", "#1 rank 1"])
+        self.assertEqual(self.ok("close", "1", "Hecho."), ["#1 v7", "note 2 on #1"])
+        self.assertEqual(self.ok("close", "1"), [])  # already done: nothing written
+        self.assertEqual(self.ok("close", "1", "Otra."), ["note 3 on #1"])  # only the note
+        self.assertEqual(self.ok("drop", "1"), ["#1 v8"])
+        self.assertEqual(self.ok("delete", "1"), ["#1 v9"])
+        self.assertEqual(self.ok("restore", "1"), ["#1 v10"])
+        self.assertEqual(self.ok("set", "1", "subject=X"), [])  # already so: nothing written
+
+    # --- fenced code ---
+    # A line inside a fenced code block (``` or ~~~) is never a heading: a code example in a body may
+    # have a comment at column 0 (PruebaPhysicsworld1's known issues, 2026-10-21).
+    def test_fenced_code(self):
+        code = "Ejemplo:\n\n```yaml\n# shapes.yaml\nshape: cube\n## no es una sección\n```\n\nFin."
+        body = self.make_body("spec", {"Qué es": code, "Reglas": "~~~\n# tampoco\n~~~"})
+        self.add("spec", "A", "--body", body)  # accepted: the comments are not sections
+        self.assertEqual(self.ok("sections", "1"), ["## Qué es", "## Reglas", "## Configuración", "## Más adelante"])
+        self.assertEqual(self.ok("section", "1", "Qué es"), code.split("\n"))
+        self.assertIn("no section 'shapes.yaml'", self.fails("section", "1", "shapes.yaml"))
+        self.ok("add-section", "1", "Detalle", "--after", "Qué es")  # after the whole section, code included
+        self.assertEqual(self.ok("sections", "1")[:3], ["## Qué es", "### Detalle", "## Reglas"])
+        self.assertEqual(self.ok("section", "1", "Qué es")[-1], "### Detalle")
+        self.assertEqual(self.ok("sections", "--check"), [])
+        # A fence never closed makes the rest of the body code: its headings are gone, and refused.
+        unclosed = "## Qué es\n\n```\n## Reglas\n\n## Configuración\n\n## Más adelante"
+        self.assertIn("does not follow the spec sections", self.fails("add", "spec", "B", "--body", unclosed))
 
     # --- columns ---
     def test_columns(self):

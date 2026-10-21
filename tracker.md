@@ -138,7 +138,9 @@ unless the item is still at version `N` (`show` prints it as `vN`).
 **Line format:** the subject column widens to the longest subject of each output and always leaves
 at least two spaces before the title; with short subjects it is 12 characters as always.
 
-**Sections** are the body's markdown headings (`#` to `######` followed by a space). A title given
+**Sections** are the body's markdown headings (`#` to `######` followed by a space), outside fenced
+code blocks (between ```` ``` ```` or `~~~` fences), so a code example may have a `#` comment at column 0;
+a fence never closed makes the rest of the body code. A title given
 to a command is normalized before matching: leading `#`s and surrounding spaces are dropped and case
 is ignored. A section runs to the next heading of the same or a higher level, so its subsections are
 part of it.
@@ -220,6 +222,12 @@ the index files `Next steps.md`, `Drafts.md`, `Potential problems.md`, `Debt.md`
 - `refs` gives `{"mentions", "missing", "mentioned_by"}`, each entry with `in`: `["body"]`, `["notes"]` or
   both; `refs --check` gives one `{"item_id", "section", "ref", "problem"}` per wrong reference; `subjects` gives
   `{"subject", "open_count", "total"}`; `sections` gives `{"level", "title"}`; `section` the text alone.
+
+**Every write says what it wrote**, one line each: `#ID vN` for a new version (`set`,
+`section --set`, `add-section`, `replace`, `close`, `drop`, `delete`, `restore`), `note N on #ID` for a
+note (`note`, and the final note of `close`/`drop`), `#ID rank N` or `#ID backlog` for a rank (`rank`,
+`set rank=`). `add` prints the new id, and `ask`/`answer` the note number (`note N`). A write that writes
+nothing prints nothing on stdout (its warning is on stderr).
 
 Errors exit with code 1 and one line on stderr. Every write that changes an item appends exactly one
 version; `note` and `rank` append none, and neither does a write that changes nothing:
