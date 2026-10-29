@@ -156,9 +156,13 @@ class ReportDialog(QDialog):
             view.setPlainText(str(error))
 
 
-# One table row: the label left-aligned, the cells right-aligned in columns of `width`.
-def table_row(label, cells, width=9):
-    return f"  {label:<10}" + "".join(f"{cell:>{width}}" for cell in cells)
+# A table: the header cells (and `tail_header` over the tails) over rows of (label, cells, tail);
+# labels left-aligned as wide as the widest, cells right-aligned in columns of `width`, tails after them.
+def table(header, rows, width=9, tail_header=""):
+    label_width = max([8] + [len(label) for label, _, _ in rows])
+    line = lambda label, cells, tail: (f"  {label:<{label_width}}" + "".join(f"{cell:>{width}}" for cell in cells)
+                                       + (f"   {tail}" if tail else "")).rstrip()
+    return [line("", header, tail_header)] + [line(label, cells, tail) for label, cells, tail in rows]
 
 
 # The units a duration is shown in, (symbol, minutes in one), largest first; below a minute, seconds.
@@ -167,28 +171,60 @@ DURATION_UNITS = (("d", 24 * 60), ("h", 60), ("m", 1))
 
 # A duration given in minutes, in the largest unit it fills at least once, with up to one decimal: 25 m, 1.7 h, 3 d.
 def duration_text(minutes):
-    symbol, size = next(((symbol, size) for symbol, size in DURATION_UNITS if minutes >= size), ("s", 1 / 60))
+    symbol, size = next(((symbol, size) for symbol, size in DURATION_UNITS if minutes >= size),
+                        ("s", 1 / 60) if minutes > 0 else ("m", 1))
     return f"{minutes / size:.1f}".removesuffix(".0") + " " + symbol
 
 
-# A duration figure's rows (`all` then each type): count, imported, mean, median, mode, range.
-def duration_rows(figure):
-    lines = [table_row("", ("count", "imported", "mean", "median", "min", "max")) + "   mode"]
-    for label, stats in [("all", figure["all"])] + list(figure["by_type"].items()):
-        if not stats["count"]:
-            lines.append(table_row(label, (0,)))
-            continue
-        # With no value occurring twice, every value is a mode: nothing to show.
-        mode = ", ".join(duration_text(value) for value in stats["mode"]) if stats["mode_count"] > 1 else "no value repeats"
-        often = "" if stats["mode_count"] == 1 else (
-            f" ({stats['mode_count']} of {stats['count']})" if len(stats["mode"]) == 1 else f" ({stats['mode_count']} each)")
-        lines.append(table_row(label, (stats["count"], stats["imported"])
-                               + tuple(duration_text(stats[key]) for key in ("mean", "median", "min", "max")))
-                     + f"   {mode}{often}")
+# One row of a duration figure: count, imported, mean, median, min, max, then the mode.
+def duration_row(label, stats):
+    if not stats["count"]:
+        return (label, (0,), "")
+    # With no value occurring twice, every value is a mode: nothing to show.
+    if stats["mode_count"] == 1:
+        mode = "no value repeats"
+    else:
+        often = f"{stats['mode_count']} of {stats['count']}" if len(stats["mode"]) == 1 else f"{stats['mode_count']} each"
+        mode = ", ".join(duration_text(value) for value in stats["mode"]) + f" ({often})"
+    return (label, (stats["count"], stats["imported"]) + tuple(duration_text(stats[key]) for key in ("mean", "median", "min", "max")), mode)
+
+
+# A duration figure's table: all, each type, then each subject.
+def duration_table(figure):
+    rows = [duration_row("all", figure["all"])] + [duration_row(type_, stats) for type_, stats in figure["by_type"].items()]
+    if figure["by_subject"]:
+        rows += [("by subject:", (), "")] + [duration_row(subject or "(none)", stats) for subject, stats in figure["by_subject"].items()]
+    return table(("count", "imported", "mean", "median", "min", "max"), rows, tail_header="mode")
+
+
+# A table of counts by status: the totals, then one row per key of `groups`.
+def status_table(totals, groups):
+    statuses = list(totals["by_status"])
+    rows = [("all", [totals["total"]] + list(totals["by_status"].values()), "")]
+    rows += [(name or "(none)", [counts["total"]] + list(counts["by_status"].values()), "") for name, counts in groups.items()]
+    return table(["total"] + statuses, rows)
+
+
+# An item of a list: its id, type and status, `detail`, then its title and subject.
+def item_line(entry, detail):
+    subject = f"  [{entry['subject']}]" if entry["subject"] else ""
+    return f"  #{entry['item_id']:<5} {entry['type']:<8} {entry['status']:<8} {detail}  {entry['title']}{subject}"
+
+
+# The lines of a list of items, or "none".
+def item_lines(entries, detail):
+    return [item_line(entry, detail(entry)) for entry in entries] or ["  none"]
+
+
+# A list overall and by type (`all`, `by_type`), each under its own heading.
+def typed_item_lines(lists, detail):
+    lines = ["  All"] + item_lines(lists["all"], detail)
+    for type_, entries in lists["by_type"].items():
+        lines += ["", f"  {type_.capitalize()}"] + item_lines(entries, detail)
     return lines
 
 
-# The report as text: a heading per section, tables in fixed columns.
+# The report as text: a heading per section, tables in fixed columns, durations in readable units.
 def report_text(report):
     lines = [f"Generated {report['generated']}"]
     section = lambda title: lines.extend(["", title, "-" * len(title)])
@@ -205,40 +241,51 @@ def report_text(report):
 
     section("ITEMS")
     items = report["items"]
-    statuses = list(items["by_status"])
-    lines.append(table_row("", ["total"] + statuses))
-    lines.append(table_row("all", [items["total"]] + list(items["by_status"].values())))
-    for type_, counts in items["by_type"].items():
-        lines.append(table_row(type_, [counts["total"]] + list(counts["by_status"].values())))
-    lines.append(f"  Deleted: {items['deleted']}")
+    lines += status_table(items, items["by_type"]) + ["", "  By subject"] + status_table(items, items["by_subject"])
+    lines += ["", f"  Deleted: {items['deleted']}   Reopened after closing: {items['reopened']}",
+              f"  Open or doing in the ranked list: {items['ranked']}, out of it: {items['unranked']}"]
 
     section("COMPLETION TIMES (from first open or doing to closed)")
     for status, figure in report["completion"].items():
-        lines += ["", f"  {status.capitalize()}"] + duration_rows(figure["time"])
+        lines += ["", f"  {status.capitalize()}"] + duration_table(figure["time"])
         lines.append(f"  Not timed: {figure['imported_closed']} imported closed, {figure['recorded_closed']} recorded closed "
                      f"(closed right after being added), {figure['never_opened']} never opened")
 
+    section("STATUS TIMES")
+    steps = {"draft_to_open": "Draft to open (or doing)", "open_to_doing": "Open to doing", "doing_to_done": "Doing to done"}
+    for name, step in report["status_times"].items():
+        lines += ["", f"  {steps[name]}"] + duration_table(step["time"])
+        lines.append(f"  Finished inside the import, not timed: {step['in_import']}")
+
     section("QUESTIONS")
     questions = report["questions"]
-    lines.append(table_row("", ("total", "open", "answered")))
-    lines.append(table_row("all", (questions["total"], questions["open"], questions["answered"])))
-    for type_, counts in questions["by_type"].items():
-        lines.append(table_row(type_, (counts["total"], counts["open"], counts["answered"])))
+    keys = ("total", "open", "answered")
+    lines += table(keys, [("all", [questions[key] for key in keys], "")]
+                   + [(type_, [counts[key] for key in keys], "") for type_, counts in questions["by_type"].items()])
     lines.append(f"  Answered inside the import, not timed: {questions['answered_in_import']}")
-    lines += ["", "  Time to answer"] + duration_rows(questions["time_to_answer"])
-    lines += ["", "  Oldest open"]
-    for question in questions["oldest_open"] or [None]:
-        lines.append("    none" if question is None else
-                     f"    note {question['note_id']:<5} #{question['item_id']:<5} {question['type']:<8} "
-                     f"asked {question['asked']}  {duration_text(question['minutes']):>7} ago  {question['title']}")
+    lines += ["", "  Time to answer"] + duration_table(questions["time_to_answer"])
+    lines += ["", "  Open questions by item, oldest first"]
+    lines += item_lines(questions["open_by_item"], lambda entry: f"{entry['open_questions']:>2} open, oldest note "
+                        f"{entry['oldest_note_id']} asked {entry['oldest_asked']} ({duration_text(entry['minutes'])} ago)")
+
+    section("OLDEST ITEMS NOT CLOSED (by creation; imported ones are older still)")
+    lines += typed_item_lines(report["oldest_open"], lambda entry: f"created {entry['created']} "
+                              f"{duration_text(entry['minutes']) + ' ago':>9}{' (imported)' if entry['imported'] else ''}")
+
+    section("STALE ITEMS (not closed, by their last change or note)")
+    lines += typed_item_lines(report["stale"], lambda entry: f"last change {entry['last_change']} {duration_text(entry['minutes']) + ' ago':>9}")
 
     section("MOST VERSIONS")
-    for item in report["most_versions"] or [None]:
-        lines.append("  none" if item is None else
-                     f"  {item['versions']:>4}  #{item['item_id']:<5} {item['type']:<8} {item['status']:<8} {item['title']}")
+    lines += item_lines(report["most_versions"], lambda entry: f"{entry['versions']:>4} versions")
+
+    section("MOST NOTES")
+    lines += item_lines(report["most_notes"], lambda entry: f"{entry['notes']:>4} notes")
 
     section("DOING")
-    for item in report["doing"] or [None]:
-        lines.append("  none" if item is None else
-                     f"  #{item['item_id']:<5} {item['type']:<8} since {item['since']}  {duration_text(item['minutes']):>7}  {item['title']}")
+    lines += item_lines(report["doing"], lambda entry: f"since {entry['since']} ({duration_text(entry['minutes'])})")
+
+    section("ACTIVITY BY DAY (not closed: drafts, open and doing at the end of the day)")
+    fields = ("created", "closed", "asked", "answered", "not_closed")
+    lines += table([field.replace("_", " ") for field in fields],
+                   [(day["date"], [day[field] for field in fields], "") for day in report["activity"]], width=11)
     return "\n".join(lines)

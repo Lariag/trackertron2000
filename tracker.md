@@ -205,7 +205,8 @@ the index files `Next steps.md`, `Drafts.md`, `Potential problems.md`, `Debt.md`
 `tracker_export_*/` folders are git-ignored when they are made inside the tracker folder.
 
 **Report.** `track report` prints the statistics as JSON, with or without `--json`; the GUI's Report
-button shows it as text. Deleted items count only in `items.deleted`.
+button shows it as text. Deleted items count only in `items.deleted`. **An item in any list of the
+report** is `item_id`, `title`, `type`, `status`, `subject`, then the list's own fields.
 - `import`: the import the database started with, if any. The candidate is the opening burst of writes
   (versions and notes, each less than 30 minutes after the one before); it is an import when its busiest
   minute of closings beats the busiest minute of closings since (an import brings items in closed in bulk,
@@ -213,25 +214,40 @@ button shows it as text. Deleted items count only in `items.deleted`.
   `{"detected": false}`, or `detected`, `ended` (its last write), `items` (the live items it brought in),
   `closed` and `open` (their state when it ended; `open` includes drafts and doing), `closings_peak` and
   `later_closings_peak`.
-- `items`: `total`, `deleted`, `by_status` and `by_type` (each with `total` and `by_status`).
+- `items`: `total`, `deleted`, `by_status`, `by_type` and `by_subject` (each with `total` and
+  `by_status`), `reopened` (items with a version not closed after a closed one), `ranked` and `unranked`
+  (the open and doing items in the ranked list and out of it).
 - `completion`: for `done` and `dropped` apart, `time` (from an item's first `open` or `doing` version
   to the version that closed it), `imported_closed` (closed inside the import: in the totals, in no time),
-  `never_opened` (closed without being open or doing: no time) and `recorded_closed` (written down when
-  the work was over: closed by the version right after its creation, with no note before the closing; the
-  tracker never saw the work start, so it is in the totals, in no time; a note written by the closing
-  itself does not count as one before it; an item the import brought in is never recorded closed, its first
-  version being the import).
+  `recorded_closed` (written down when the work was over: closed by the version right after its creation,
+  with no note before the closing; the tracker never saw the work start, so it is in the totals, in no
+  time; a note written by the closing itself does not count as one before it; an item the import brought
+  in is never recorded closed, its first version being the import) and `never_opened` (closed without
+  being open or doing: no time).
+- `status_times`: `draft_to_open` (from an item's first `draft` version to its first later `open` or
+  `doing` one), `open_to_doing` (first `open` to the first later `doing`) and `doing_to_done` (first
+  `doing` to the first later `done`), each with `time` and `in_import` (steps finished inside the import:
+  counted, not timed).
 - `questions`: `total`, `open`, `answered`, `answered_in_import` (answered inside it: no time), `by_type`
   (each with `total`, `open`, `answered`), `time_to_answer` (from the question's note to its answer's)
-  and `oldest_open` (the first 10: `note_id`, `item_id`, `title`, `type`, `asked`, `minutes` waiting).
-- `most_versions`: the 10 items with the most versions (`item_id`, `title`, `type`, `status`, `versions`);
-  `doing`: every item in progress, longest first, with `since` (the version that made it doing) and `minutes` since.
-- Every time figure (`time`, `time_to_answer`) has `all` and `by_type` (only the types with values), each
-  `{"unit", "count", "imported", "mean", "median", "mode", "mode_count", "min", "max"}` (just `unit` and
-  `count` when empty). `imported` is how many of the values come from imported items, whose times run from
-  the import. **Every duration is in minutes** (writes are dated to the minute, so every value is whole
-  minutes; the mean is rounded to two decimals): the GUI shows each in the unit that suits it (`s`, `m`,
-  `h`, `d`). The `mode` is a list of every value tied for it, and `mode_count` how often it occurs.
+  and `open_by_item` (the first 10 items with open questions, closed items included, the one asked longest
+  ago first: `open_questions`, `oldest_note_id`, `oldest_asked`, `minutes` waiting).
+- `oldest_open` and `stale`: the items not closed, oldest by their first version (`created`, `minutes`
+  since, `imported` when the import brought them in, so they are older still) and stalest by their last
+  version or note (`last_change`, `minutes` since); each `{"all", "by_type"}`, the first 10 of each.
+- `most_versions` and `most_notes`: the 10 items with the most versions (`versions`) and notes (`notes`);
+  `doing`: every item in progress, longest first, with `since` (the version that made it doing) and
+  `minutes` since.
+- `activity`: one entry per day from the first write to today, days without activity included:
+  `date`, `created`, `closed` (closings that day), `asked`, `answered` (questions), `not_closed` (the
+  items draft, open or doing at the end of the day).
+- Every time figure (each `time`, `time_to_answer`) has `all`, `by_type` and `by_subject` (only those with
+  values), each `{"unit", "count", "imported", "mean", "median", "mode", "mode_count", "min", "max"}` (just
+  `unit` and `count` when empty). `imported` is how many of the values come from imported items, whose
+  times run from the import. **Every duration is in minutes** (writes are dated to the minute, so every
+  value is whole minutes; the mean is rounded to two decimals): the GUI shows each in the unit that suits
+  it (`s`, `m`, `h`, `d`). The `mode` is a list of every value tied for it, and `mode_count` how often it
+  occurs.
 
 **JSON.** `--json` before the command makes the reading commands print JSON (it is what the GUI reads).
 **An item's id is always `item_id`, in every JSON output, and nothing else names an item**:

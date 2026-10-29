@@ -47,6 +47,7 @@ Index:
 - columns: the subject column widens so a long subject keeps two spaces before the title
 - report without import: totals, deleted apart, completion and answer times (mean, median, mode), recorded closed and never opened in no time, top lists
 - report with import: the opening burst detected by its closings, imported closed only in the totals, imported times counted
+- report sections: by subject, reopened, ranked, status times, oldest and stale items, most notes, open questions by item, activity per day
 """
 import json
 import os
@@ -1138,7 +1139,7 @@ class TrackTest(unittest.TestCase):
         empty = self.report()
         self.assertEqual(empty["import"], {"detected": False})
         self.assertEqual(empty["items"]["total"], 0)
-        self.assertEqual(empty["completion"]["done"]["time"], {"all": {"unit": "minutes", "count": 0}, "by_type": {}})
+        self.assertEqual(empty["completion"]["done"]["time"], {"all": {"unit": "minutes", "count": 0}, "by_type": {}, "by_subject": {}})
         self.assertEqual((empty["questions"]["total"], empty["most_versions"], empty["doing"]), (0, [], []))
 
         self.add("feature", "A")
@@ -1186,7 +1187,7 @@ class TrackTest(unittest.TestCase):
         self.assertEqual(questions["by_type"], {"debt": {"total": 1, "open": 0, "answered": 1}})
         self.assertEqual(questions["time_to_answer"]["all"]["median"], 90)
         self.assertEqual(questions["time_to_answer"]["all"]["unit"], "minutes")
-        self.assertEqual(questions["oldest_open"], [])
+        self.assertEqual(questions["open_by_item"], [])
         self.assertEqual([(item["item_id"], item["versions"]) for item in report["most_versions"]], [(2, 3), (4, 3), (1, 2), (3, 2), (6, 2)])
         self.assertEqual([(item["item_id"], item["since"]) for item in report["doing"]], [(4, "2026-01-07 09:15")])
 
@@ -1240,8 +1241,52 @@ class TrackTest(unittest.TestCase):
         self.assertEqual(questions["time_to_answer"]["all"], {"unit": "minutes", "count": 2, "imported": 1, "mean": 810,
                                                               "median": 810, "mode": [180, 1440], "mode_count": 1,
                                                               "min": 180, "max": 1440})
-        self.assertEqual([(q["note_id"], q["item_id"], q["asked"]) for q in questions["oldest_open"]],
-                         [(after[1] + 1, 6, "2026-01-04 08:00")])
+        self.assertEqual([(q["oldest_note_id"], q["item_id"], q["title"], q["open_questions"], q["oldest_asked"])
+                          for q in questions["open_by_item"]], [(after[1] + 1, 6, "F", 1, "2026-01-04 08:00")])
+
+    def test_report_sections(self):
+        self.add("feature", "A", "--subject", "Alpha", "--status", "draft")
+        for status in ("open", "doing"):
+            self.ok("set", "1", f"status={status}")
+        self.ok("close", "1")
+        self.ok("set", "1", "status=open")  # reopened
+        self.add("bug", "B", "--subject", "Beta", "--rank", "1")
+        noted = self.note_id("note", "2", "seen again")
+        asked = self.note_id("ask", "2", "q?")
+        self.add("debt", "C", "--subject", "Alpha")
+        # #1: draft two hours, open a day, doing an hour, then reopened; #2 last touched by its question.
+        self.stamp({(1, 1): "2026-01-01 10:00", (1, 2): "2026-01-01 12:00", (1, 3): "2026-01-02 12:00",
+                    (1, 4): "2026-01-02 13:00", (1, 5): "2026-01-03 10:00", (2, 1): "2026-01-01 11:00",
+                    (3, 1): "2026-01-02 09:00"},
+                   {noted: "2026-01-01 11:30", asked: "2026-01-04 09:00"})
+        report = self.report()
+        self.assertEqual(report["import"], {"detected": False})
+        items = report["items"]
+        open_only = lambda n: {"total": n, "by_status": {"draft": 0, "open": n, "doing": 0, "done": 0, "dropped": 0}}
+        self.assertEqual(items["by_subject"], {"Alpha": open_only(2), "Beta": open_only(1)})
+        self.assertEqual((items["reopened"], items["ranked"], items["unranked"]), (1, 1, 2))
+        steps = report["status_times"]
+        self.assertEqual({name: steps[name]["time"]["all"]["median"] for name in steps},
+                         {"draft_to_open": 120, "open_to_doing": 1440, "doing_to_done": 60})
+        self.assertEqual(steps["draft_to_open"]["time"]["by_subject"]["Alpha"]["count"], 1)
+        self.assertEqual(steps["draft_to_open"]["in_import"], 0)
+        oldest = report["oldest_open"]
+        self.assertEqual([(entry["item_id"], entry["title"], entry["created"]) for entry in oldest["all"]],
+                         [(1, "A", "2026-01-01 10:00"), (2, "B", "2026-01-01 11:00"), (3, "C", "2026-01-02 09:00")])
+        self.assertEqual(sorted(oldest["by_type"]), ["bug", "debt", "feature"])
+        self.assertFalse(oldest["all"][0]["imported"])
+        self.assertEqual(oldest["all"][0]["subject"], "Alpha")  # every list names its items in full
+        self.assertEqual([(entry["item_id"], entry["last_change"]) for entry in report["stale"]["all"]],
+                         [(3, "2026-01-02 09:00"), (1, "2026-01-03 10:00"), (2, "2026-01-04 09:00")])
+        self.assertEqual([(entry["item_id"], entry["title"], entry["notes"]) for entry in report["most_notes"]], [(2, "B", 2)])
+        self.assertEqual([(entry["item_id"], entry["open_questions"]) for entry in report["questions"]["open_by_item"]], [(2, 1)])
+        activity = report["activity"]
+        self.assertEqual(activity[:4], [
+            {"date": "2026-01-01", "created": 2, "closed": 0, "asked": 0, "answered": 0, "not_closed": 2},
+            {"date": "2026-01-02", "created": 1, "closed": 1, "asked": 0, "answered": 0, "not_closed": 2},
+            {"date": "2026-01-03", "created": 0, "closed": 0, "asked": 0, "answered": 0, "not_closed": 3},
+            {"date": "2026-01-04", "created": 0, "closed": 0, "asked": 1, "answered": 0, "not_closed": 3}])
+        self.assertEqual((activity[-1]["date"], activity[-1]["not_closed"]), (datetime.now().strftime("%Y-%m-%d"), 3))
 
 
 if __name__ == "__main__":
