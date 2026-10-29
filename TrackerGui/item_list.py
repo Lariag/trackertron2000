@@ -69,6 +69,7 @@ class ItemList(QWidget):
     move_requested = Signal(int, int)
     new_requested = Signal()
     export_requested = Signal()
+    report_requested = Signal()
 
     def __init__(self, tracker):
         super().__init__()
@@ -128,6 +129,9 @@ class ItemList(QWidget):
         export = QToolButton(text="Export", toolTip="Write every item as markdown files into a folder you pick")
         export.clicked.connect(self.export_requested)
         row.addWidget(export)
+        report = QToolButton(text="Report", toolTip="The statistics: totals, completion times, questions, top lists")
+        report.clicked.connect(self.report_requested)
+        row.addWidget(report)
         layout.addLayout(row)
 
         self.table = QTableView()

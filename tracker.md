@@ -120,6 +120,7 @@ Every `ID` argument (and `--mentions ID`) takes the id bare or with its `#` (`42
 | `track rank ID N` | insert the item at position `N` of the ranked list (shifting the rest); `N = 0` sends it to the backlog. Only `open`/`doing` items can be ranked |
 | `track delete ID` / `track restore ID` | logical delete (the item disappears from every command, its rank is removed) and its undo. `delete` warns when live bodies still mention the item |
 | `track subjects` | the distinct subjects with their open counts |
+| `track report` | the statistics of the live items, always as JSON (see **Report** below). Reads only |
 | `track export DIR` | write the latest, non-deleted items as markdown files into a new `DIR/tracker_export_<YYYY-MM-DD_HHMMSS>/`; prints the folder. Reads only |
 | `track dump` | rewrite the SQL dump (done automatically after every change) |
 
@@ -202,6 +203,35 @@ Bodies and notes are read differently:
 **Export** writes `Specs/`, `Features/`, `Bugs/`, `Debt/`, `Problems/` with one `NNNN Title.md` per item, plus
 the index files `Next steps.md`, `Drafts.md`, `Potential problems.md`, `Debt.md` and `Done.md`. The
 `tracker_export_*/` folders are git-ignored when they are made inside the tracker folder.
+
+**Report.** `track report` prints the statistics as JSON, with or without `--json`; the GUI's Report
+button shows it as text. Deleted items count only in `items.deleted`.
+- `import`: the import the database started with, if any. The candidate is the opening burst of writes
+  (versions and notes, each less than 30 minutes after the one before); it is an import when its busiest
+  minute of closings beats the busiest minute of closings since (an import brings items in closed in bulk,
+  work closes them a few at a time; with no closings since, there is nothing to compare with and no import).
+  `{"detected": false}`, or `detected`, `ended` (its last write), `items` (the live items it brought in),
+  `closed` and `open` (their state when it ended; `open` includes drafts and doing), `closings_peak` and
+  `later_closings_peak`.
+- `items`: `total`, `deleted`, `by_status` and `by_type` (each with `total` and `by_status`).
+- `completion`: for `done` and `dropped` apart, `time` (from an item's first `open` or `doing` version
+  to the version that closed it), `imported_closed` (closed inside the import: in the totals, in no time),
+  `never_opened` (closed without being open or doing: no time) and `recorded_closed` (written down when
+  the work was over: closed by the version right after its creation, with no note before the closing; the
+  tracker never saw the work start, so it is in the totals, in no time; a note written by the closing
+  itself does not count as one before it; an item the import brought in is never recorded closed, its first
+  version being the import).
+- `questions`: `total`, `open`, `answered`, `answered_in_import` (answered inside it: no time), `by_type`
+  (each with `total`, `open`, `answered`), `time_to_answer` (from the question's note to its answer's)
+  and `oldest_open` (the first 10: `note_id`, `item_id`, `title`, `type`, `asked`, `minutes` waiting).
+- `most_versions`: the 10 items with the most versions (`item_id`, `title`, `type`, `status`, `versions`);
+  `doing`: every item in progress, longest first, with `since` (the version that made it doing) and `minutes` since.
+- Every time figure (`time`, `time_to_answer`) has `all` and `by_type` (only the types with values), each
+  `{"unit", "count", "imported", "mean", "median", "mode", "mode_count", "min", "max"}` (just `unit` and
+  `count` when empty). `imported` is how many of the values come from imported items, whose times run from
+  the import. **Every duration is in minutes** (writes are dated to the minute, so every value is whole
+  minutes; the mean is rounded to two decimals): the GUI shows each in the unit that suits it (`s`, `m`,
+  `h`, `d`). The `mode` is a list of every value tied for it, and `mode_count` how often it occurs.
 
 **JSON.** `--json` before the command makes the reading commands print JSON (it is what the GUI reads).
 **An item's id is always `item_id`, in every JSON output, and nothing else names an item**:
@@ -302,5 +332,6 @@ only reads, with the body and notes rendered and every field and writing action 
 edit mode has the plain editor instead of the rendered body, the note input and the actions. In the
 notes, a question is marked ❓ (open) or ✅ (answered) and an answer 💬, with the note numbers; the
 ❓ Questions button of the list keeps only the items with an open question (`track questions`),
-closed ones included. Its search box asks `list --search` a moment after typing stops; the chips and
+closed ones included. The Report button opens `track report` in a window of its own, as
+plain text by sections. Its search box asks `list --search` a moment after typing stops; the chips and
 the subject filter work on the loaded rows.

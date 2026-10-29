@@ -45,6 +45,7 @@ QPushButton#primary {{ background: {ACCENT}; border-color: {ACCENT}; color: whit
 QPushButton#primary:disabled {{ background: {PANEL_ALT}; border-color: {BORDER}; color: {MUTED}; font-weight: 400; }}
 QPushButton#danger:hover {{ border-color: {TYPE_COLORS["bug"]}; color: {TYPE_COLORS["bug"]}; }}
 QToolButton#chip {{ padding: 2px 8px; border-radius: 10px; font-size: 12px; }}
+QPlainTextEdit#monospace {{ font-family: Consolas, monospace; }}
 QLabel#muted {{ color: {MUTED}; }}
 QLabel#heading {{ color: {MUTED}; font-weight: 600; font-size: 11px; letter-spacing: 1px; }}
 QComboBox::drop-down {{ border: 0; width: 18px; }}

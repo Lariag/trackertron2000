@@ -45,6 +45,8 @@ Index:
 - every write says what it wrote: #ID vN, note N on #ID, #ID rank N; nothing when nothing is written
 - fenced code: no heading inside ``` or ~~~ blocks; an unclosed fence hides the rest
 - columns: the subject column widens so a long subject keeps two spaces before the title
+- report without import: totals, deleted apart, completion and answer times (mean, median, mode), recorded closed and never opened in no time, top lists
+- report with import: the opening burst detected by its closings, imported closed only in the totals, imported times counted
 """
 import json
 import os
@@ -1113,6 +1115,133 @@ class TrackTest(unittest.TestCase):
         self.assertIn("Visión general larga  Título uno", lines[0])
         self.assertEqual(lines[0].index("Título"), lines[1].index("Título"))  # titles aligned
         self.assertEqual(self.ok("list", "--subject", "Corto"), ["#2    feature  open    Corto        Título dos"])  # short: as before
+
+    # --- report ---
+    # The report, parsed.
+    def report(self):
+        return json.loads("\n".join(self.ok("report")))
+
+    # Set when the writes happened, straight in the database: `versions` is {(item, version): moment},
+    # `notes` is {note: moment}. Every write a report test makes is stamped, so none is left at today.
+    def stamp(self, versions, notes=None):
+        conn = sqlite3.connect(self.db)
+        conn.executemany("UPDATE versions SET changed = ? WHERE item_id = ? AND version = ?",
+                         [(moment, item, version) for (item, version), moment in versions.items()])
+        conn.executemany("UPDATE notes SET date = ? WHERE id = ?", [(moment, note) for note, moment in (notes or {}).items()])
+        conn.commit()
+        conn.close()
+
+    def note_id(self, *args):
+        return int(self.ok(*args)[0].split()[1])
+
+    def test_report_without_import(self):
+        empty = self.report()
+        self.assertEqual(empty["import"], {"detected": False})
+        self.assertEqual(empty["items"]["total"], 0)
+        self.assertEqual(empty["completion"]["done"]["time"], {"all": {"unit": "minutes", "count": 0}, "by_type": {}})
+        self.assertEqual((empty["questions"]["total"], empty["most_versions"], empty["doing"]), (0, [], []))
+
+        self.add("feature", "A")
+        working = self.note_id("note", "1", "working on it")
+        self.ok("close", "1")
+        self.add("bug", "B")
+        self.ok("set", "2", "title=B2")
+        self.ok("close", "2")
+        self.add("feature", "C", "--status", "draft")
+        self.ok("drop", "3")
+        self.add("debt", "D")
+        self.ok("set", "4", "title=D2")
+        self.ok("set", "4", "status=doing")
+        self.add("bug", "E")
+        self.ok("delete", "5")
+        asked = self.note_id("ask", "4", "q?")
+        answer = self.note_id("answer", str(asked), "a")
+        self.add("bug", "F")  # written down when done: closed right after, its note with the closing
+        self.ok("close", "6", "fixed")
+        # The opening burst closes one item in a minute (#1); later work closes one too (#2): no import.
+        self.stamp({(1, 1): "2026-01-01 10:00", (1, 2): "2026-01-01 10:01", (2, 1): "2026-01-05 10:00",
+                    (2, 2): "2026-01-05 11:00", (2, 3): "2026-01-06 22:00", (3, 1): "2026-01-05 10:00",
+                    (3, 2): "2026-01-05 11:00", (4, 1): "2026-01-05 10:00", (4, 2): "2026-01-05 10:30",
+                    (4, 3): "2026-01-07 09:15", (5, 1): "2026-01-05 10:00", (5, 2): "2026-01-05 10:00",
+                    (6, 1): "2026-01-05 10:00", (6, 2): "2026-01-05 10:05"},
+                   {working: "2026-01-01 10:00", asked: "2026-01-05 12:00", answer: "2026-01-05 13:30",
+                    answer + 1: "2026-01-05 10:05"})
+        report = self.report()
+        self.assertEqual(report["import"], {"detected": False})
+        items = report["items"]
+        self.assertEqual((items["total"], items["deleted"]), (5, 1))  # the deleted one only as deleted
+        self.assertEqual(items["by_status"], {"draft": 0, "open": 0, "doing": 1, "done": 3, "dropped": 1})
+        self.assertEqual(items["by_type"]["bug"], {"total": 2, "by_status": {"draft": 0, "open": 0, "doing": 0, "done": 2, "dropped": 0}})
+        done = report["completion"]["done"]
+        self.assertEqual(done["time"]["all"], {"unit": "minutes", "count": 2, "imported": 0, "mean": 1080.5, "median": 1080.5,
+                                               "mode": [1, 2160], "mode_count": 1, "min": 1, "max": 2160})  # 1 minute and 1.5 days
+        self.assertEqual(sorted(done["time"]["by_type"]), ["bug", "feature"])
+        self.assertEqual(done["time"]["by_type"]["bug"]["mean"], 2160)
+        self.assertEqual((done["imported_closed"], done["recorded_closed"], done["never_opened"]), (0, 1, 0))  # #6 in no time
+        dropped = report["completion"]["dropped"]  # a draft dropped was never worked on
+        self.assertEqual((dropped["time"]["all"]["count"], dropped["never_opened"]), (0, 1))
+        questions = report["questions"]
+        self.assertEqual({key: questions[key] for key in ("total", "open", "answered", "answered_in_import")},
+                         {"total": 1, "open": 0, "answered": 1, "answered_in_import": 0})
+        self.assertEqual(questions["by_type"], {"debt": {"total": 1, "open": 0, "answered": 1}})
+        self.assertEqual(questions["time_to_answer"]["all"]["median"], 90)
+        self.assertEqual(questions["time_to_answer"]["all"]["unit"], "minutes")
+        self.assertEqual(questions["oldest_open"], [])
+        self.assertEqual([(item["item_id"], item["versions"]) for item in report["most_versions"]], [(2, 3), (4, 3), (1, 2), (3, 2), (6, 2)])
+        self.assertEqual([(item["item_id"], item["since"]) for item in report["doing"]], [(4, "2026-01-07 09:15")])
+
+        # The later work closing fewer items in its busiest minute than the burst would make it an import.
+        self.stamp({(2, 3): "2026-01-01 10:01"})
+        self.assertTrue(self.report()["import"]["detected"])
+
+    def test_report_with_import(self):
+        for title in ("A", "B", "C"):
+            item = self.add("feature", title)
+            self.ok("close", str(item))
+        self.add("bug", "D")
+        self.ok("close", "4")
+        self.add("feature", "E")
+        self.ok("set", "5", "title=E2")
+        self.ok("close", "5")
+        self.add("debt", "F", "--status", "draft")
+        self.add("problem", "G")  # brought in open, closed after the import with nothing in between: not recorded closed
+        self.ok("close", "7")
+        in_import = [self.note_id("ask", "4", "q1?")]
+        in_import.append(self.note_id("answer", str(in_import[0]), "a1"))
+        across = [self.note_id("ask", "4", "q2?")]
+        across.append(self.note_id("answer", str(across[0]), "a2"))
+        after = [self.note_id("ask", "5", "q3?")]
+        after.append(self.note_id("answer", str(after[0]), "a3"))
+        self.note_id("ask", "6", "q4?")
+        # The burst: #1-#3 closed in one minute, #4 and #7 brought in open, #6 a draft. After a pause, #4 closed
+        # two days on, #5 made and closed half a day later and #7 closed four days on, one closing per minute.
+        self.stamp({(1, 1): "2026-01-01 10:00", (2, 1): "2026-01-01 10:00", (3, 1): "2026-01-01 10:00",
+                    (1, 2): "2026-01-01 10:01", (2, 2): "2026-01-01 10:01", (3, 2): "2026-01-01 10:01",
+                    (4, 1): "2026-01-01 10:02", (6, 1): "2026-01-01 10:03", (4, 2): "2026-01-03 10:02",
+                    (7, 1): "2026-01-01 10:03", (7, 2): "2026-01-05 10:00",
+                    (5, 1): "2026-01-02 12:00", (5, 2): "2026-01-02 13:00", (5, 3): "2026-01-03 00:00"},
+                   {in_import[0]: "2026-01-01 10:02", in_import[1]: "2026-01-01 10:05", across[0]: "2026-01-01 10:04",
+                    across[1]: "2026-01-02 10:04", after[0]: "2026-01-02 12:00", after[1]: "2026-01-02 15:00",
+                    after[1] + 1: "2026-01-04 08:00"})
+        report = self.report()
+        self.assertEqual(report["import"], {"detected": True, "ended": "2026-01-01 10:05", "items": 6, "closed": 3,
+                                            "open": 3, "closings_peak": 3, "later_closings_peak": 1})
+        self.assertEqual(report["items"]["by_status"]["done"], 6)  # the imported closed ones count in the totals
+        done = report["completion"]["done"]
+        self.assertEqual((done["imported_closed"], done["recorded_closed"]), (3, 0))  # imported first, though closed right after
+        self.assertEqual(done["time"]["all"], {"unit": "minutes", "count": 3, "imported": 2, "mean": 3119, "median": 2880,
+                                               "mode": [720, 2880, 5757], "mode_count": 1, "min": 720, "max": 5757})
+        self.assertEqual(done["time"]["by_type"]["bug"]["imported"], 1)  # #4's time runs from the import
+        self.assertEqual(done["time"]["by_type"]["feature"]["imported"], 0)
+        self.assertEqual(done["time"]["by_type"]["problem"]["count"], 1)  # #7 timed from the import
+        questions = report["questions"]
+        self.assertEqual({key: questions[key] for key in ("total", "open", "answered", "answered_in_import")},
+                         {"total": 4, "open": 1, "answered": 3, "answered_in_import": 1})
+        self.assertEqual(questions["time_to_answer"]["all"], {"unit": "minutes", "count": 2, "imported": 1, "mean": 810,
+                                                              "median": 810, "mode": [180, 1440], "mode_count": 1,
+                                                              "min": 180, "max": 1440})
+        self.assertEqual([(q["note_id"], q["item_id"], q["asked"]) for q in questions["oldest_open"]],
+                         [(after[1] + 1, 6, "2026-01-04 08:00")])
 
 
 if __name__ == "__main__":

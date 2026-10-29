@@ -14,10 +14,12 @@ import os
 import re
 import shutil
 import sqlite3
+import statistics
 import sys
 import tempfile
 import time
-from datetime import datetime
+from collections import Counter
+from datetime import datetime, timedelta
 
 TYPES = ("spec", "feature", "bug", "debt", "problem")
 STATUSES = ("draft", "open", "doing", "done", "dropped")
@@ -1178,6 +1180,204 @@ def cmd_subjects(conn, args):
     return False
 
 
+# --- report: the tracker's statistics, as JSON ------------------------------------------------
+
+# The opening burst of writes ends at the first pause at least this long between two of them.
+IMPORT_PAUSE = timedelta(minutes=30)
+# How many items each list of the report names.
+REPORT_TOP = 10
+# The statuses an item is worked from: its completion time runs from the first of them to its closing.
+STARTED = ("open", "doing")
+
+
+# A write's moment: versions and notes are written to the minute, the oldest closing dates to the day.
+def parse_moment(text):
+    return datetime.strptime(text, "%Y-%m-%d %H:%M" if len(text) > 10 else "%Y-%m-%d")
+
+
+# Every item's versions, oldest first, as {item_id: [rows]}.
+def item_histories(conn):
+    histories = {}
+    for row in conn.execute("SELECT item_id, version, changed, type, status, title, deleted FROM versions "
+                            "ORDER BY item_id, version"):
+        histories.setdefault(row["item_id"], []).append(row)
+    return histories
+
+
+# The versions that closed an item: a closed status after one that was not.
+def closing_versions(history):
+    return [row for previous, row in zip([None] + history, history)
+            if row["status"] in CLOSED and (previous is None or previous["status"] not in CLOSED)]
+
+
+# The version from which an item has had its current status: the first of its last run of versions with it.
+def status_since(history):
+    since = history[-1]
+    for row in reversed(history):
+        if row["status"] != since["status"]:
+            break
+        since = row
+    return since
+
+
+# The import the database started with, or None. The candidate is the opening burst of writes
+# (versions and notes, each less than IMPORT_PAUSE after the one before); it is an import when its
+# busiest minute of closings beats the busiest minute of closings since: brought-in items arrive
+# closed in bulk, work closes them a few at a time. With no closings after the burst there is
+# nothing to compare with, so no import. Returns the burst's last write and both peaks.
+def detect_import(conn, histories):
+    moments = sorted({parse_moment(row[0]) for row in conn.execute("SELECT changed FROM versions UNION SELECT date FROM notes")})
+    end = next((previous for previous, current in zip(moments, moments[1:]) if current - previous >= IMPORT_PAUSE), None)
+    if end is None:
+        return None
+    per_minute = Counter(parse_moment(row["changed"]) for history in histories.values() for row in closing_versions(history))
+    inside = max((count for moment, count in per_minute.items() if moment <= end), default=0)
+    after = max((count for moment, count in per_minute.items() if moment > end), default=0)
+    if after == 0 or inside <= after:
+        return None
+    return {"end": end, "closings_peak": inside, "later_closings_peak": after}
+
+
+# A duration figure over `values`, (minutes, whether it comes from an imported item) pairs: mean, median,
+# mode, range and how many of the values are imported ones. Writes are dated to the minute, so every
+# value is whole minutes; the mode lists every value tied for it, with how often it occurs.
+def duration_stats(values):
+    if not values:
+        return {"unit": "minutes", "count": 0}
+    amounts = sorted(amount for amount, _ in values)
+    counts = Counter(amounts)
+    top = max(counts.values())
+    return {"unit": "minutes", "count": len(amounts), "imported": sum(imported for _, imported in values),
+            "mean": round(statistics.mean(amounts), 2), "median": statistics.median(amounts),
+            "mode": sorted(value for value, count in counts.items() if count == top), "mode_count": top,
+            "min": amounts[0], "max": amounts[-1]}
+
+
+# A duration figure for all the values and for each type that has any: `values` is {type: [pairs]}.
+def grouped_stats(values):
+    return {"all": duration_stats([pair for type_ in TYPES for pair in values.get(type_, [])]),
+            "by_type": {type_: duration_stats(values[type_]) for type_ in TYPES if values.get(type_)}}
+
+
+# Whether an item was written down when its work was already over: closed by the version right after
+# its creation (`closing`, the version that closed it), with no note before it. The tracker never saw
+# that work start, so its time says nothing. A note written with the closing (`close ID "note"`) is
+# not one before it.
+def recorded_closed(closing, note_moments):
+    closed_at = parse_moment(closing["changed"])
+    return closing["version"] == 2 and not any(moment < closed_at for moment in note_moments)
+
+
+def minutes_between(start, end):
+    return int((end - start) / timedelta(minutes=1))
+
+
+# The statistics of the live items, always as JSON: totals by status and type, the completion times
+# (first open/doing to closed, done and dropped apart), the questions and their time to answer, the
+# items with the most versions, the items in progress and the oldest open questions. Items an import
+# brought in already closed count in every total but in no time; the times of the other imported
+# items run from the import and each figure says how many of its values they are. Items recorded
+# closed (see `recorded_closed`) count in the totals but in no time either.
+def cmd_report(conn, args):
+    histories = item_histories(conn)
+    note_moments = {}
+    for row in conn.execute("SELECT item_id, date FROM notes"):
+        note_moments.setdefault(row["item_id"], []).append(parse_moment(row["date"]))
+    found = detect_import(conn, histories)
+    end = found["end"] if found else None
+    inside = (lambda moment: end is not None and moment <= end)
+    now_moment = parse_moment(now())
+    by_status = Counter()
+    by_type = {type_: Counter() for type_ in TYPES}
+    completion = {status: {"values": {}, "imported_closed": 0, "recorded_closed": 0, "never_opened": 0} for status in CLOSED}
+    imported = Counter()
+    deleted = 0
+    most_versions, doing = [], []
+    for item_id, history in histories.items():
+        latest = history[-1]
+        if latest["deleted"]:
+            deleted += 1
+            continue
+        by_status[latest["status"]] += 1
+        by_type[latest["type"]][latest["status"]] += 1
+        most_versions.append({"item_id": item_id, "title": latest["title"], "type": latest["type"],
+                              "status": latest["status"], "versions": latest["version"]})
+        brought_in = inside(parse_moment(history[0]["changed"]))
+        if brought_in:
+            at_end = [row for row in history if inside(parse_moment(row["changed"]))][-1]
+            imported["closed" if at_end["status"] in CLOSED else "open"] += 1
+        if latest["status"] == "doing":
+            since = status_since(history)
+            doing.append({"item_id": item_id, "title": latest["title"], "type": latest["type"],
+                          "since": since["changed"], "minutes": minutes_between(parse_moment(since["changed"]), now_moment)})
+        if latest["status"] not in CLOSED:
+            continue
+        figure = completion[latest["status"]]
+        closing = closing_versions(history)[-1]
+        closed_at = parse_moment(closing["changed"])
+        if inside(closed_at):
+            figure["imported_closed"] += 1
+            continue
+        start = next((parse_moment(row["changed"]) for row in history if row["status"] in STARTED), None)
+        if start is None or start > closed_at:
+            figure["never_opened"] += 1
+            continue
+        # An item the import brought in was not written down after its work: its first version is the import.
+        if not brought_in and recorded_closed(closing, note_moments.get(item_id, [])):
+            figure["recorded_closed"] += 1
+            continue
+        figure["values"].setdefault(latest["type"], []).append((minutes_between(start, closed_at), inside(start)))
+    most_versions.sort(key=lambda item: (-item["versions"], item["item_id"]))
+    doing.sort(key=lambda item: (item["since"], item["item_id"]))
+
+    questions = {"total": 0, "open": 0, "answered": 0, "answered_in_import": 0,
+                 "by_type": {type_: Counter() for type_ in TYPES}}
+    waits = {}
+    for row in conn.execute(
+            "SELECT n.date AS asked, a.date AS answered, l.type FROM notes n JOIN questions q ON q.note_id = n.id "
+            "JOIN latest l ON l.item_id = n.item_id LEFT JOIN answers x ON x.question_id = n.id "
+            "LEFT JOIN notes a ON a.id = x.note_id WHERE l.deleted = 0"):
+        state = "answered" if row["answered"] else "open"
+        for counts in (questions, questions["by_type"][row["type"]]):
+            counts["total"] += 1
+            counts[state] += 1
+        if not row["answered"]:
+            continue
+        asked, answered = parse_moment(row["asked"]), parse_moment(row["answered"])
+        if inside(answered):
+            questions["answered_in_import"] += 1
+            continue
+        waits.setdefault(row["type"], []).append((minutes_between(asked, answered), inside(asked)))
+    questions["by_type"] = {type_: {key: counts[key] for key in ("total", "open", "answered")}
+                            for type_, counts in questions["by_type"].items() if counts}
+    questions["time_to_answer"] = grouped_stats(waits)
+    questions["oldest_open"] = [
+        {"note_id": row["note_id"], "item_id": row["item_id"], "title": row["title"], "type": row["type"],
+         "asked": row["asked"], "minutes": minutes_between(parse_moment(row["asked"]), now_moment)}
+        for row in open_questions(conn)[:REPORT_TOP]]
+
+    report = {
+        "generated": now(),
+        "import": {"detected": False} if not found else {
+            "detected": True, "ended": end.strftime("%Y-%m-%d %H:%M"), "items": imported["closed"] + imported["open"],
+            "closed": imported["closed"], "open": imported["open"],
+            "closings_peak": found["closings_peak"], "later_closings_peak": found["later_closings_peak"]},
+        "items": {"total": sum(by_status.values()), "deleted": deleted,
+                  "by_status": {status: by_status[status] for status in STATUSES},
+                  "by_type": {type_: {"total": sum(counts.values()), "by_status": {s: counts[s] for s in STATUSES}}
+                              for type_, counts in by_type.items()}},
+        "completion": {status: {"time": grouped_stats(figure["values"]),
+                                "imported_closed": figure["imported_closed"], "recorded_closed": figure["recorded_closed"],
+                                "never_opened": figure["never_opened"]}
+                       for status, figure in completion.items()},
+        "questions": questions,
+        "most_versions": most_versions[:REPORT_TOP],
+        "doing": doing,
+    }
+    print(json.dumps(report, ensure_ascii=False, indent=2))
+    return False
+
+
 # --- export: the latest, non-deleted items as markdown files --------------------------------
 
 EXPORT_PREFIX = "tracker_export_"
@@ -1401,6 +1601,9 @@ def build_parser():
 
     p = sub.add_parser("subjects", help="distinct subjects with open counts")
     p.set_defaults(func=cmd_subjects)
+
+    p = sub.add_parser("report", help="the statistics as JSON: totals, completion times, questions, top lists")
+    p.set_defaults(func=cmd_report)
 
     p = sub.add_parser("export", help="write the items as markdown files in a new tracker_export_<timestamp> folder")
     p.add_argument("dir", help="the folder to create it in")

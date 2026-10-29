@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (QApplication, QFileDialog, QMainWindow, QMessageB
                                QWidget, QVBoxLayout)
 
 from cli import CliError, Tracker  # noqa: E402
-from dialogs import QuickAddDialog  # noqa: E402
+from dialogs import QuickAddDialog, ReportDialog  # noqa: E402
 from item_list import ItemList  # noqa: E402
 from item_view import ItemView  # noqa: E402
 from theme import STYLESHEET  # noqa: E402
@@ -48,6 +48,7 @@ class MainWindow(QMainWindow):
         self.items.move_requested.connect(self._move_rank)
         self.items.new_requested.connect(self.new_item)
         self.items.export_requested.connect(self.export)
+        self.items.report_requested.connect(lambda: ReportDialog(self, self.tracker).show())
         self.view.changed.connect(self.items.refresh)
         self.view.error.connect(lambda message: self.statusBar().showMessage(message, 6000))
 

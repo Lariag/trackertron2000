@@ -76,6 +76,10 @@ class Tracker:
     def subjects(self):
         return self.query("subjects")
 
+    # The statistics (`report` is always JSON).
+    def report(self):
+        return json.loads(self.run("report"))
+
     # --- writes ---
     def add(self, type_, title, subject="", status="open", body="", rank=None):
         args = ["add", type_, title, "--status", status]
